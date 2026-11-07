@@ -8,7 +8,7 @@
 	},
 	"id": "daniel.practice-buffer",
 	"name": "Practice Buffer",
-	"version": "v1.0.0",
+	"version": "v1.2.0",
 	"developer": "Daniel",
 	"description": "Click buffer for practice: a jump pressed a few frames early is applied when you land or touch an orb.",
 	"tags": ["gameplay", "utility"],
@@ -39,6 +39,15 @@
 			"name": "Buffer orbs",
 			"description": "Early clicks activate an orb you touch within the buffer window.",
 			"default": true
+		},
+		"orb-frames": {
+			"type": "int",
+			"name": "Orb buffer (frames)",
+			"description": "Separate, shorter window for orbs. A press only activates an orb if you touch it within this many frames (60 FPS frames). Keep it low so you don't hit orbs you meant to skip.",
+			"default": 2,
+			"min": 1,
+			"max": 6,
+			"control": { "input": true, "slider": true }
 		},
 		"buffer-ground": {
 			"type": "bool",
