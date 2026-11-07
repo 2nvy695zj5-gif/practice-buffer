@@ -8,8 +8,8 @@ using namespace geode::prelude;
 // (landing, touching an orb), the press is remembered and applied the moment
 // it becomes usable, as long as that happens inside the buffer window.
 //
-// Safety: by default it only runs in practice mode, and an on-screen label
-// shows whenever the buffer is active.
+// v1.1: the buffer check now runs from update() (guaranteed hook), and the
+// indicator shows how many presses were stored and how many were used.
 
 namespace {
 	bool enabled()      { return Mod::get()->getSettingValue<bool>("enabled"); }
@@ -20,13 +20,15 @@ namespace {
 	double windowSeconds() {
 		return static_cast<double>(Mod::get()->getSettingValue<int64_t>("buffer-frames")) / 60.0;
 	}
+	double orbWindowSeconds() {
+		return static_cast<double>(Mod::get()->getSettingValue<int64_t>("orb-frames")) / 60.0;
+	}
 
 	// Cube, ball, robot and spider jump from the ground. Ship, UFO, wave and swing don't.
 	bool groundBufferable(PlayerObject* p) {
 		return !(p->m_isShip || p->m_isBird || p->m_isDart || p->m_isSwing);
 	}
 
-	// Is the buffer allowed to act in this PlayLayer right now?
 	bool bufferActive(PlayLayer* pl) {
 		if (!pl || !enabled()) return false;
 		if (practiceOnly() && !pl->m_isPracticeMode) return false;
@@ -34,6 +36,10 @@ namespace {
 	}
 
 	constexpr char const* INDICATOR_ID = "buffer-indicator";
+
+	// Debug counters shown on the indicator.
+	int g_stored = 0;   // presses remembered while in the air
+	int g_used = 0;     // remembered presses that turned into a jump/orb hit
 }
 
 // ---------- On-screen indicator ----------
@@ -42,10 +48,13 @@ class $modify(BufferPlayLayer, PlayLayer) {
 	bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
 		if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
 
+		g_stored = 0;
+		g_used = 0;
+
 		auto label = CCLabelBMFont::create("Buffer ON", "bigFont.fnt");
 		label->setID(INDICATOR_ID);
 		label->setScale(0.35f);
-		label->setOpacity(160);
+		label->setOpacity(180);
 		label->setColor({ 255, 200, 80 });
 		label->setAnchorPoint({ 0.f, 0.f });
 		label->setPosition({ 5.f, 5.f });
@@ -53,13 +62,6 @@ class $modify(BufferPlayLayer, PlayLayer) {
 		label->setVisible(bufferActive(this));
 		this->addChild(label);
 		return true;
-	}
-
-	void postUpdate(float dt) {
-		PlayLayer::postUpdate(dt);
-		if (auto label = this->getChildByID(INDICATOR_ID)) {
-			label->setVisible(bufferActive(this));
-		}
 	}
 };
 
@@ -76,6 +78,9 @@ class $modify(BufferGameLayer, GJBaseGameLayer) {
 
 	struct Fields {
 		Pending p[2];
+		int lastStored = -1;
+		int lastUsed = -1;
+		bool lastVisible = false;
 	};
 
 	bool isActivePlay() {
@@ -94,10 +99,14 @@ class $modify(BufferGameLayer, GJBaseGameLayer) {
 
 		if (down) {
 			p.realHeld = true;
-			// Can't be used right now? Remember it.
 			bool usableNow = player && (player->m_isOnGround || !player->m_touchedRings.empty());
-			p.active = player && !player->m_isDead && !usableNow;
+			bool store = player && !player->m_isDead && !usableNow;
+			p.active = store;
 			p.time = m_gameState.m_levelTime;
+			if (store) {
+				g_stored++;
+				log::debug("stored press at t={:.3f}", p.time);
+			}
 		} else {
 			p.realHeld = false;
 			p.injectedHeld = false;
@@ -106,11 +115,12 @@ class $modify(BufferGameLayer, GJBaseGameLayer) {
 		GJBaseGameLayer::handleButton(down, button, isPlayer1);
 	}
 
-	void processCommands(float dt, bool isHalfTick, bool isLastTick) {
+	void update(float dt) {
 		if (this->isActivePlay()) {
 			this->bufferStep();
 		}
-		GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+		GJBaseGameLayer::update(dt);
+		this->updateIndicator();
 	}
 
 	void bufferStep() {
@@ -123,7 +133,7 @@ class $modify(BufferGameLayer, GJBaseGameLayer) {
 			if (!player) continue;
 			auto& p = m_fields->p[i];
 
-			// Release a press we sent once the real button is no longer held.
+			// Release a press we sent once the real button is up and time has moved on.
 			if (p.injectedHeld && !p.realHeld && now > p.injectTime) {
 				GJBaseGameLayer::handleButton(false, 1, isP1);
 				p.injectedHeld = false;
@@ -131,25 +141,47 @@ class $modify(BufferGameLayer, GJBaseGameLayer) {
 
 			if (!p.active) continue;
 
-			// now < p.time: level restarted or respawned at a checkpoint.
+			// now < p.time: restarted or respawned at a checkpoint.
 			if (player->m_isDead || now < p.time || now - p.time > window) {
+				if (now - p.time > window) log::debug("press expired after {:.3f}s", now - p.time);
 				p.active = false;
 				continue;
 			}
 
-			bool onRing   = bufferOrbs()   && !player->m_touchedRings.empty();
+			// Orbs use their own, shorter window: an early tap only counts for an orb
+			// you reach almost immediately, not one you were planning to fly past.
+			double age = now - p.time;
+			bool onRing   = bufferOrbs()   && !player->m_touchedRings.empty() && age <= orbWindowSeconds();
 			bool onGround = bufferGround() && player->m_isOnGround && groundBufferable(player);
 
 			if (onRing || onGround) {
-				// Holding on landing: the game already jumps by itself.
-				// For orbs (or if you let go) we send the press.
 				if (onRing || !p.realHeld) {
 					GJBaseGameLayer::handleButton(true, 1, isP1);
 					p.injectedHeld = true;
 					p.injectTime = now;
 				}
+				g_used++;
+				log::debug("used press after {:.3f}s ({})", now - p.time, onRing ? "orb" : "ground");
 				p.active = false;
 			}
+		}
+	}
+
+	void updateIndicator() {
+		auto pl = PlayLayer::get();
+		if (!pl || static_cast<GJBaseGameLayer*>(pl) != this) return;
+		auto label = typeinfo_cast<CCLabelBMFont*>(pl->getChildByID(INDICATOR_ID));
+		if (!label) return;
+
+		bool visible = bufferActive(pl);
+		if (visible != m_fields->lastVisible) {
+			label->setVisible(visible);
+			m_fields->lastVisible = visible;
+		}
+		if (visible && (g_stored != m_fields->lastStored || g_used != m_fields->lastUsed)) {
+			label->setString(fmt::format("Buffer ON  lagret: {}  brukt: {}", g_stored, g_used).c_str());
+			m_fields->lastStored = g_stored;
+			m_fields->lastUsed = g_used;
 		}
 	}
 };
