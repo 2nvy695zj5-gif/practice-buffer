@@ -1,0 +1,50 @@
+{
+	"geode": "5.11.2",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "daniel.practice-buffer",
+	"name": "Practice Buffer",
+	"version": "v1.0.0",
+	"developer": "Daniel",
+	"description": "Click buffer for practice: a jump pressed a few frames early is applied when you land or touch an orb.",
+	"tags": ["gameplay", "utility"],
+	"settings": {
+		"enabled": {
+			"type": "bool",
+			"name": "Enabled",
+			"description": "Turn the click buffer on or off.",
+			"default": true
+		},
+		"practice-only": {
+			"type": "bool",
+			"name": "Practice mode only",
+			"description": "Only buffer clicks in practice mode. Keep this on so you never record a normal run with the buffer active.",
+			"default": true
+		},
+		"buffer-frames": {
+			"type": "int",
+			"name": "Buffer (frames)",
+			"description": "How early a click can be, in 60 FPS frames (1 frame is about 16.7 ms).",
+			"default": 2,
+			"min": 1,
+			"max": 16,
+			"control": { "input": true, "slider": true }
+		},
+		"buffer-orbs": {
+			"type": "bool",
+			"name": "Buffer orbs",
+			"description": "Early clicks activate an orb you touch within the buffer window.",
+			"default": true
+		},
+		"buffer-ground": {
+			"type": "bool",
+			"name": "Buffer ground jumps",
+			"description": "Early clicks make you jump when you land within the buffer window (cube, ball, robot, spider).",
+			"default": true
+		}
+	}
+}
